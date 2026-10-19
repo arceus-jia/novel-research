@@ -16,7 +16,7 @@ sys.path.insert(0, str(SCRIPTS))
 import analysis
 import corpus
 import memory
-from common import NovelError, atomic_write_json
+from common import NovelError, atomic_write_json, digest
 
 
 class AnalysisTests(unittest.TestCase):
@@ -51,7 +51,7 @@ class AnalysisTests(unittest.TestCase):
         self.error("RECORD_CONFLICT", lambda: analysis.submit_task(self.root, changed))
         self.assertEqual(analysis.status(self.root)["completed"], 1)
         self.assertEqual(analysis.next_task(self.root, 1, 1)["state"], "complete")
-        self.assertEqual(analysis.next_task(self.root)["task"]["chapter"]["ordinal"], 2)
+        self.assertEqual(analysis.next_task(self.root, mode="analyze")["task"]["chapter"]["ordinal"], 2)
         analysis.submit_task(self.root, self.body())
         self.assertTrue(analysis.status(self.root)["coverage_complete"])
         self.assertTrue(memory.check_records(self.root)["valid"])
@@ -78,7 +78,14 @@ class AnalysisTests(unittest.TestCase):
         invalid = {**body, "claims": [{"kind": "belief", "text": "待查", "evidence": []}]}
         self.error("MISSING_EVIDENCE", lambda: analysis.submit_task(self.root, invalid))
         self.assertEqual(analysis.next_task(self.root)["previous_error"]["attempts"], 1)
-        with mock.patch.object(analysis, "read_json", side_effect=OSError("diagnostic unavailable")):
+        read_json = analysis.read_json
+
+        def unreadable_diagnostic(path):
+            if path.parent.name == "task-errors":
+                raise OSError("diagnostic unavailable")
+            return read_json(path)
+
+        with mock.patch.object(analysis, "read_json", side_effect=unreadable_diagnostic):
             self.assertIsNone(analysis.next_task(self.root)["previous_error"])
         self.assertEqual(analysis.submit_task(self.root, body)["state"], "saved")
 
@@ -209,6 +216,137 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(self.cli("search", "青客", "--chapter-from", "2", "--chapter-to", "1", success=False)["code"], "USAGE")
         (self.root / "bad.json").write_text('{"n":' + "9" * 5000 + "}", encoding="utf-8")
         self.assertEqual(self.cli("notes", "save", "bad.json", success=False)["code"], "INVALID_JSON")
+
+    def test_modes_keep_completion_separate_and_share_search_and_views(self):
+        deep = analysis.next_task(self.root, mode="analyze")["task"]
+        skim = analysis.next_task(self.root, mode="skim")["task"]
+        self.assertNotEqual(deep["task_id"], skim["task_id"])
+        self.assertEqual(deep["spans"], skim["spans"])
+        analysis.submit_task(self.root, self.body(deep))
+        self.assertEqual(analysis.status(self.root)["mode"], "skim")
+        self.assertEqual(analysis.status(self.root)["completed"], 0)
+        while True:
+            result = analysis.next_task(self.root)
+            if result["state"] != "pending":
+                break
+            analysis.submit_task(self.root, self.body(result["task"]))
+        self.assertEqual(result["state"], "complete")
+        self.assertTrue(analysis.status(self.root, mode="skim")["coverage_complete"])
+        deep_status = analysis.status(self.root, mode="analyze")
+        self.assertEqual((deep_status["completed"], deep_status["pending"], deep_status["stale_record_count"]), (1, 1, 0))
+        self.assertFalse(deep_status["coverage_complete"])
+        matches = analysis.search_analysis(self.root, ["青客"])["matches"]
+        self.assertEqual({item["mode"] for item in matches}, {"skim", "analyze"})
+        self.assertTrue(all(item["mode"] == "skim" for item in analysis.search_analysis(self.root, ["青客"], mode="skim")["matches"]))
+        library = (self.root / "analysis/views/library.md").read_text(encoding="utf-8")
+        self.assertIn("粗读任务：已接收 2 / 2", library)
+        self.assertIn("精读任务：已接收 1 / 2", library)
+        chapters = (self.root / "analysis/views/chapters.md").read_text(encoding="utf-8")
+        self.assertIn("· 粗读", chapters)
+        self.assertIn("· 精读", chapters)
+        self.assertTrue(analysis.check_records(self.root)["valid"])
+
+    def test_cli_resume_keeps_mode_and_scope_and_explicit_mode_means_whole_book(self):
+        task = self.cli("task", "next", "--mode", "skim", "--chapter-from", "2", "--chapter-to", "2")["task"]
+        self.assertEqual((task["mode"], task["chapter"]["ordinal"]), ("skim", 2))
+        atomic_write_json(self.root / ".novel/inbox/skim.json", self.body(task))
+        self.cli("task", "submit", ".novel/inbox/skim.json")
+        resumed = self.cli("task", "next")
+        self.assertEqual((resumed["mode"], resumed["state"]), ("skim", "complete"))
+        self.assertEqual(resumed["scope"], {"chapter_from": 2, "chapter_to": 2})
+        self.assertFalse(resumed["status"]["coverage_complete"])
+        full = self.cli("task", "next", "--mode", "skim")["task"]
+        self.assertEqual(full["chapter"]["ordinal"], 1)
+        selection = self.cli("status")["reading_session"]
+        self.assertEqual((selection["mode"], selection["chapter_from"], selection["chapter_to"]), ("skim", None, None))
+        self.assertEqual(self.cli("status", "--mode", "analyze")["completed"], 0)
+        deep = self.cli("task", "next", "--mode", "analyze")["task"]
+        self.assertEqual((deep["mode"], deep["chapter"]["ordinal"]), ("analyze", 1))
+        matches = self.cli("search", "青客", "--in", "analysis", "--mode", "skim")["matches"]
+        self.assertTrue(matches)
+        self.assertTrue(all(item["mode"] == "skim" for item in matches))
+        self.assertEqual(self.cli("search", "青客", "--mode", "skim", success=False)["code"], "USAGE")
+        self.assertEqual(self.cli("task", "next", "--mode", "missing", success=False)["code"], "USAGE")
+
+    def test_skim_preserves_evidence_checks_and_correction_links(self):
+        task = analysis.next_task(self.root, mode="skim")["task"]
+        body = self.body(task)
+        self.error("MODE_MISMATCH", lambda: analysis.submit_task(self.root, {**body, "mode": "analyze"}))
+        self.error("INVALID_INPUT", lambda: analysis.submit_task(self.root, {**body, "overview": ""}))
+        invalid = copy.deepcopy(body)
+        invalid["claims"][0]["evidence"] = []
+        self.error("MISSING_EVIDENCE", lambda: analysis.submit_task(self.root, invalid))
+        invalid["claims"][0]["evidence"] = [{"span_id": list(corpus.iter_spans(self.root))[1]["span_id"], "quote": "青客这时才知道真相。"}]
+        self.error("EVIDENCE_OUT_OF_RANGE", lambda: analysis.submit_task(self.root, invalid))
+        self.assertEqual(analysis.status(self.root)["completed"], 0)
+        record = analysis.submit_task(self.root, body)["record"]
+        correction = memory.save_note(self.root, {"type": "correction", "origin": "agent", "status": "applied",
+            "content": "粗读也只能记为怀疑，不能提前写为知道。", "target_id": record["claims"][0]["id"],
+            "evidence": body["claims"][0]["evidence"]})
+        item = next(item for item in analysis.search_analysis(self.root, ["怀疑"], mode="skim")["matches"] if item["kind"] == "belief")
+        self.assertEqual(item["current_status"], "superseded")
+        self.assertIn(correction["record_id"], item["corrections"]["correction_ids"])
+
+    def test_legacy_analysis_without_mode_is_reused(self):
+        body = self.body()
+        record = analysis.submit_task(self.root, body)["record"]
+        path = self.root / "analysis/records" / (record["record_id"] + ".json")
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        envelope["data"].pop("mode", None)
+        envelope["payload_hash"] = digest(envelope["data"])
+        atomic_write_json(path, envelope)
+        original = path.read_bytes()
+        self.assertEqual(analysis.status(self.root, mode="analyze")["completed"], 1)
+        self.assertEqual(analysis.next_task(self.root, mode="analyze")["task"]["chapter"]["ordinal"], 2)
+        self.assertEqual(analysis.status(self.root, mode="skim")["completed"], 0)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_source_edit_invalidates_both_modes_but_reuses_unchanged_chapter(self):
+        for mode in ("skim", "analyze"):
+            for _ in range(2):
+                task = analysis.next_task(self.root, mode=mode)["task"]
+                analysis.submit_task(self.root, self.body(task))
+        self.source.write_text(self.source.read_text(encoding="utf-8").replace("只怀疑", "仍怀疑"), encoding="utf-8")
+        corpus.prepare(self.root)
+        for mode in ("skim", "analyze"):
+            progress = analysis.status(self.root, mode=mode)
+            self.assertEqual((progress["completed"], progress["pending"], progress["stale_record_count"]), (1, 1, 2))
+            self.assertEqual(analysis.next_task(self.root, mode=mode)["task"]["chapter"]["ordinal"], 1)
+        self.assertTrue(analysis.check_records(self.root)["valid"])
+
+    def test_corrupt_reading_session_does_not_silently_switch_modes(self):
+        analysis.next_task(self.root, mode="skim")
+        atomic_write_json(self.root / ".novel/reading.json", {"format_version": 1, "mode": "missing"})
+        self.error("INVALID_READING_STATE", lambda: analysis.next_task(self.root))
+
+    def test_skim_long_chapter_reads_every_span_once(self):
+        self.source.write_text("第一章 长夜\n" + "青客仍在等待。" * 2500, encoding="utf-8")
+        corpus.prepare(self.root)
+        seen = []
+        text = []
+        result = analysis.next_task(self.root, mode="skim")
+        while result["state"] == "pending":
+            task = result["task"]
+            self.assertLessEqual(task["input_characters"], analysis.TASK_CHARS)
+            seen.extend(span["span_id"] for span in task["spans"])
+            text.extend(span["text"] for span in task["spans"])
+            analysis.submit_task(self.root, {"task_id": task["task_id"], "input_fingerprint": task["input_fingerprint"],
+                "mode": "skim", "overview": "青客继续等待。", "mentions": [], "claims": [], "open_questions": []})
+            result = analysis.next_task(self.root)
+        self.assertEqual(result["state"], "complete")
+        self.assertEqual(len(seen), len(set(seen)))
+        self.assertEqual("".join(text), self.source.read_text(encoding="utf-8"))
+        self.assertTrue(analysis.status(self.root, mode="skim")["coverage_complete"])
+        self.assertEqual(analysis.status(self.root, mode="analyze")["completed"], 0)
+
+    def test_skim_contract_change_keeps_existing_deep_analysis(self):
+        for mode in ("skim", "analyze"):
+            task = analysis.next_task(self.root, mode=mode)["task"]
+            analysis.submit_task(self.root, self.body(task))
+        contract_hash = analysis._contract_hash
+        with mock.patch.object(analysis, "_contract_hash", side_effect=lambda mode: "new-skim-contract" if mode == "skim" else contract_hash(mode)):
+            self.assertEqual(analysis.status(self.root, mode="skim")["completed"], 0)
+            self.assertEqual(analysis.status(self.root, mode="analyze")["completed"], 1)
 
 
 if __name__ == "__main__":

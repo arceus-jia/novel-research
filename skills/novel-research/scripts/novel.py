@@ -55,6 +55,7 @@ def parser():
     prepare.add_argument("--title")
     prepare.add_argument("--encoding", default="utf-8")
     status = commands.add_parser("status", help="查看来源变更、分析覆盖与章节目录。")
+    status.add_argument("--mode", choices=("skim", "analyze"), help="查看指定阅读模式；省略时查看最近阅读模式。")
     status.add_argument("--chapters", action="store_true")
     _pagination(status)
     search = commands.add_parser("search", help="搜索正文、补充资料、分析导航或讨论记忆。")
@@ -62,6 +63,7 @@ def parser():
     search.add_argument("--in", dest="collection", choices=("text", "supplements", "analysis", "notes"), default="text")
     search.add_argument("--kind", action="append")
     search.add_argument("--revision")
+    search.add_argument("--mode", choices=("skim", "analyze"), help="仅用于 --in analysis；默认查询两种模式。")
     _chapters(search)
     _pagination(search)
     read = commands.add_parser("read", help="读取指定片段或章节的有界上下文。")
@@ -73,6 +75,7 @@ def parser():
     task = commands.add_parser("task", help="领取或提交逐章分析任务。")
     task_commands = task.add_subparsers(dest="action", required=True, parser_class=Parser)
     next_parser = task_commands.add_parser("next")
+    next_parser.add_argument("--mode", choices=("skim", "analyze"), help="显式模式默认全书；省略模式与范围时恢复最近阅读任务。")
     _chapters(next_parser)
     task_commands.add_parser("submit").add_argument("file")
     notes = commands.add_parser("notes", help="保存或读取讨论、纠错和研究偏好。")
@@ -95,7 +98,7 @@ def doctor(root=None):
     check_python()
     skill = Path(__file__).resolve().parent.parent
     resources = ["SKILL.md", "scripts/common.py", "scripts/corpus.py", "scripts/analysis.py", "scripts/memory.py", "scripts/epub.py",
-                 "references/setup.md", "references/intake.md", "references/analyze.md", "references/research.md", "references/library.md"]
+                 "references/setup.md", "references/intake.md", "references/analyze.md", "references/skim.md", "references/research.md", "references/library.md"]
     missing = [name for name in resources if not (skill / name).is_file()]
     modules = {name: importlib.util.find_spec(name) is not None
                for name in ("argparse", "hashlib", "json", "pathlib", "tempfile", "unittest", "zipfile", "html.parser", "xml.etree.ElementTree")}
@@ -169,7 +172,7 @@ def dispatch(args):
                 "preview_truncated": len(manifest["chapters"]) > 20,
                 "next": "status --chapters 可查看目录；task next 可开始分析；search 可直接检索原文。"}
     if args.command == "status":
-        result = analysis.status(root)
+        result = analysis.status(root, mode=args.mode)
         result["sources"] = corpus.scan_sources(root, limit=20)
         if args.chapters:
             require(1 <= args.limit <= 100 and args.offset >= 0, "USAGE", "limit 需为 1–100，offset 不得为负。")
@@ -180,11 +183,12 @@ def dispatch(args):
             result["next_offset"] = args.offset + args.limit if args.offset + args.limit < len(chapters) else None
         return result
     if args.command == "search":
+        require(args.mode is None or args.collection == "analysis", "USAGE", "--mode 只用于 --in analysis。")
         if args.collection in ("analysis", "notes"):
             require(not args.kind and not args.revision and args.chapter_from is None and args.chapter_to is None,
                     "USAGE", "分析/记忆检索不接受原文版本或章节过滤；请检查返回记录的范围和状态。")
             if args.collection == "analysis":
-                return analysis.search_analysis(root, args.queries, limit=args.limit, offset=args.offset)
+                return analysis.search_analysis(root, args.queries, limit=args.limit, offset=args.offset, mode=args.mode)
             require(len(args.queries) == 1 and args.offset == 0, "USAGE", "记忆检索一次接受一个查询，请使用 notes recall。")
             return memory.recall_notes(root, query=args.queries[0], limit=args.limit)
         kinds = args.kind or (["text"] if args.collection == "text" else [kind for kind in SOURCE_KINDS if kind != "text"])
@@ -195,7 +199,7 @@ def dispatch(args):
                            limit=args.limit, offset=args.offset, revision=args.revision)
     if args.command == "task":
         if args.action == "next":
-            return analysis.next_task(root, chapter_from=args.chapter_from, chapter_to=args.chapter_to)
+            return analysis.next_task(root, chapter_from=args.chapter_from, chapter_to=args.chapter_to, mode=args.mode)
         return analysis.submit_task(root, _input(root, args.file))
     if args.command == "notes":
         if args.action == "recall":

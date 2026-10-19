@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 FORMAT_VERSION = 1
 SOURCE_KINDS = ("text", "supplement", "author_note", "interview", "commentary", "user_note")
 CLAIM_KINDS = ("narration", "speech", "belief", "inference", "interpretation", "unknown")

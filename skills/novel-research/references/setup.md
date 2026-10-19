@@ -2,13 +2,15 @@
 
 ## 普通使用：给 Agent 一个目录
 
-安装并启用技能后，提供书籍目录，以自然语言提出研究问题。Agent 会执行必要的资料接入、检索和查证。可选流程入口为：`help` 展示帮助；`init <目录>` 显式接入资料；`analyze [目录]` 分批精读；`resume [目录]` 读取进度并恢复。
+安装并启用技能后，提供书籍目录，以自然语言提出研究问题。Agent 会执行必要的资料接入、检索和查证。可选流程入口为：`help` 展示帮助；`init <目录>` 显式接入资料；`skim [目录]` 粗读全书；`analyze [目录]` 精读全书；`resume [目录]` 按保存的模式和范围恢复。
 
 项目级安装后，在宿主中打开对应项目，为每本书建立独立资料目录。原文件可放在该目录任意层级，由 Agent 接收并建立来源配置。
 
 Codex CLI/IDE 的示例为 `$novel-research init ./书名`，Claude Code 为 `/novel-research init ./书名`。本技能声明 `metadata.opencode/slash: "true"`，支持该字段的 OpenCode 版本也可使用 `/novel-research init ./书名`。其他宿主可加载技能后发送“使用 novel-research init ./书名”。依据 [Codex 技能说明](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)、[Claude Code 参数说明](https://code.claude.com/docs/en/skills#pass-arguments-to-skills) 和 [OpenCode 元数据说明](https://opencode.ai/docs/skills/#write-frontmatter)。
 
 动作参数由 Agent 理解并路由现有工具，不是 Python CLI 的子命令。目录在当前会话中已明确时可省略；新会话需指定目录。只请求 `help` 时不执行接入或分析；自然语言研究和流程入口都执行必要的环境、资料检查。`init` 是可选的显式接入方式。
+
+`skim <目录>` / `analyze <目录>` 未限定章节时直接按全书范围执行，不再询问分析剧情还是全文。粗读保存简短导航，精读保存详细判断与证据，各自记录完成度。后续可从粗读继续升级精读。详见 [分批粗读](skim.md) 和 [全书精读](library.md)。
 
 以后只需把 EPUB / TXT / Markdown 放进这个目录或其新子目录，开始、恢复研究或收到更新资料请求时，Agent 会先轻量扫描未登记文件，按既有配置增量接收。普通未加密文字 EPUB 由内置标准库工具转换，不另装软件。提供访谈、评论等参考链接也可以。Agent 阅读必要内容、判断来源分类和正文顺序、维护配置，只在首次或来源改变时准备快照；只在会影响研究的实质歧义处询问。链接能否读取取决于宿主已有浏览能力，打不开的只记录为待获取。
 
@@ -159,7 +161,9 @@ status --chapters
 
 正文不能提取或仅有部分内容时会明确说明；图片不做 OCR，不处理受保护正文或固定版式。原包保留，派生文本及转换映射供检索定位，不能把位置当作原书页码。换版先重新转换；派生文本有手动编辑时工具拒绝覆盖，先保留编辑再核对版本。
 
-首次长期研究可对 Agent 说：“先分批精读全书，建立详尽资料库，再做跨章复核；中断时保存断点。”按 [全书资料库流程](library.md) 执行；也可以直接提问。生成的 `analysis/views/library.md` 为入口，章卡、人物称谓和疑问帮助定位，专题报告保存在 `research/`。精读消耗当前宿主模型的用量，不在后台调用额外模型。
+首次长期研究可使用 `skim` 按 [粗读流程](skim.md) 建立全书概览，或使用 `analyze` 按 [精读流程](library.md) 建立详细资料库；也可以直接提问。生成的 `analysis/views/library.md` 为入口，分别展示粗读与精读进度，章卡、人物称谓和疑问帮助定位，专题报告保存在 `research/`。两种阅读都消耗当前宿主模型的用量，不在后台调用额外模型。
+
+工具层通过 `task next --mode skim` 或 `task next --mode analyze` 开始对应模式，显式模式未限定章节时按全书执行。无参数 `task next` 恢复保存的模式与范围；`status` 返回 `reading_session`，可用 `status --mode skim` / `status --mode analyze` 分别查看全书完成度。旧工作区没有阅读断点时默认精读全书；旧精读记录继续复用。
 
 ## 高级：手动配置与目录排障
 

@@ -10,17 +10,37 @@ from common import (CLAIM_KINDS, NovelError, atomic_write_json, atomic_write_tex
 
 ANALYSIS_VERSION = 1
 TASK_CHARS = 6000
+MODES = ("skim", "analyze")
+MODE_LABELS = {"skim": "粗读", "analyze": "精读"}
 
 
-def _contract_hash():
-    path = Path(__file__).resolve().parent.parent / "references" / "analyze.md"
-    require(path.is_file(), "BROKEN_SKILL", "skill 缺少 references/analyze.md。")
+def _contract_hash(mode="analyze"):
+    require(mode in MODES, "INVALID_INPUT", "阅读模式应为 skim 或 analyze。")
+    path = Path(__file__).resolve().parent.parent / "references" / f"{mode}.md"
+    require(path.is_file(), "BROKEN_SKILL", f"skill 缺少 references/{mode}.md。")
     return digest({"version": ANALYSIS_VERSION, "instructions": path.read_text(encoding="utf-8")})
 
 
-def _task_specs(root, manifest):
+def _reading_session(root):
+    path = safe_path(root, ".novel/reading.json")
+    session = read_json(path) if path.is_file() else {
+        "format_version": 1, "mode": "analyze", "chapter_from": None, "chapter_to": None}
+    require(isinstance(session, dict) and type(session.get("format_version")) is int
+            and session["format_version"] == 1 and session.get("mode") in MODES,
+            "INVALID_READING_STATE", "阅读断点格式或模式无效，请核对 .novel/reading.json。")
+    for field in ("chapter_from", "chapter_to"):
+        value = session.get(field)
+        require(value is None or (type(value) is int and value >= 1),
+                "INVALID_READING_STATE", "阅读断点中的章号无效。")
+    start, end = session.get("chapter_from"), session.get("chapter_to")
+    require(start is None or end is None or start <= end,
+            "INVALID_READING_STATE", "阅读断点中的章节范围颠倒。")
+    return session
+
+
+def _task_specs(root, manifest, mode="analyze"):
     chapters = {item["id"]: item for item in manifest["chapters"]}
-    contract = _contract_hash()
+    contract = _contract_hash(mode)
     groups = []
     group = []
     characters = 0
@@ -39,11 +59,16 @@ def _task_specs(root, manifest):
     tasks = []
     for spans in groups:
         chapter = chapters[spans[0]["chapter_id"]]
-        fingerprint = digest({"contract": contract,
-                              "chapter": {key: chapter[key] for key in ("id", "ordinal", "title")},
-                              "inputs": [{"id": span["span_id"], "unit_hash": span["unit_hash"],
-                                          "text": span["text"]} for span in spans]})
+        inputs = {"contract": contract,
+                  "chapter": {key: chapter[key] for key in ("id", "ordinal", "title")},
+                  "inputs": [{"id": span["span_id"], "unit_hash": span["unit_hash"],
+                              "text": span["text"]} for span in spans]}
+        # Keep existing analyze fingerprints so installed workspaces can reuse accepted work.
+        if mode != "analyze":
+            inputs["mode"] = mode
+        fingerprint = digest(inputs)
         tasks.append({"task_id": "task-" + fingerprint[:24], "input_fingerprint": fingerprint,
+                      "mode": mode,
                       "analysis_version": ANALYSIS_VERSION, "contract_hash": contract,
                       "source_revision": manifest["revision"], "workspace_id": manifest["workspace_id"],
                       "chapter": {key: chapter[key] for key in ("id", "ordinal", "title")},
@@ -62,14 +87,17 @@ def _compatible_record(root, task):
     record = load_record(path)
     require(record.get("record_type") == "analysis" and record.get("workspace_id") == task["workspace_id"]
             and record.get("analysis_version") == ANALYSIS_VERSION
+            and record.get("mode", "analyze") == task["mode"]
             and record.get("input_fingerprint") == task["input_fingerprint"],
             "CORRUPT_RECORD", "分析记录与任务不匹配。", str(path))
     return record
 
 
-def status(root):
+def status(root, mode=None):
     manifest = corpus.load_manifest(root, check_sources=False)
-    tasks = _task_specs(root, manifest)
+    session = _reading_session(root)
+    mode = session["mode"] if mode is None else mode
+    tasks = _task_specs(root, manifest, mode)
     completed = []
     pending = []
     failed = []
@@ -86,6 +114,9 @@ def status(root):
         except NovelError as error:
             invalid.append({"task_id": task["task_id"], "code": error.code, "message": error.message})
     current_ids = {task["task_id"] for task in tasks}
+    for other_mode in MODES:
+        if other_mode != mode:
+            current_ids.update(task["task_id"] for task in _task_specs(root, manifest, other_mode))
     directory = safe_path(root, "analysis/records")
     stale = [path.stem for path in directory.glob("*.json") if path.stem not in current_ids]
     changes = corpus.source_changes(root, manifest)
@@ -101,13 +132,14 @@ def status(root):
                                             "warnings": conversion["warnings"][:20],
                                             "truncated": len(conversion["warnings"]) > 20})
     return {"workspace_id": manifest["workspace_id"], "source_revision": manifest["revision"],
+            "mode": mode, "reading_session": session,
             "source_changes": changes, "needs_review": review, "conversion_warnings": conversion_warnings,
             "task_count": len(tasks), "completed": len(completed), "pending": len(pending),
             "invalid": invalid, "failed_count": len(failed), "failed": failed[:20],
             "stale_record_count": len(stale),
             "coverage_complete": bool(tasks) and not pending and not invalid and not review and not changes,
             "next_task_id": pending[0] if pending else None,
-            "coverage_note": "覆盖表示任务产物已接收，不保证已抽取全部事实或伏笔。"}
+            "coverage_note": "覆盖仅针对 mode 所示阅读模式，不互算粗读与精读，也不保证已抽取全部事实或伏笔。"}
 
 
 def _failure(root, task):
@@ -126,10 +158,21 @@ def _failure(root, task):
     return None
 
 
-def next_task(root, chapter_from=None, chapter_to=None):
+def next_task(root, chapter_from=None, chapter_to=None, mode=None):
     manifest = corpus.load_manifest(root)
+    session = _reading_session(root)
+    if mode is None:
+        mode = session["mode"]
+        if chapter_from is None and chapter_to is None:
+            chapter_from, chapter_to = session.get("chapter_from"), session.get("chapter_to")
+    for value in (chapter_from, chapter_to):
+        require(value is None or (type(value) is int and value >= 1), "INVALID_INPUT", "章节序号从 1 开始。")
+    require(chapter_from is None or chapter_to is None or chapter_from <= chapter_to,
+            "INVALID_INPUT", "章节起点不能大于终点。")
+    session = {"format_version": 1, "mode": mode, "chapter_from": chapter_from, "chapter_to": chapter_to}
     scope_tasks = 0
-    for task in _task_specs(root, manifest):
+    selected = None
+    for task in _task_specs(root, manifest, mode):
         ordinal = task["chapter"]["ordinal"]
         if chapter_from is not None and ordinal < chapter_from:
             continue
@@ -138,15 +181,21 @@ def next_task(root, chapter_from=None, chapter_to=None):
         scope_tasks += 1
         if _compatible_record(root, task) is not None:
             continue
-        with writer_lock(root):
-            current = corpus.load_manifest(root)
-            require(current["revision"] == manifest["revision"], "INPUT_CHANGED", "领取任务期间来源版本改变，请重试。")
-            atomic_write_json(safe_path(root, f".novel/tasks/{task['task_id']}.json"), task)
-        return {"state": "pending", "task": task, "previous_error": _failure(root, task),
-                "next": "阅读 references/analyze.md，生成 JSON 后运行 task submit。"}
+        selected = task
+        break
+    with writer_lock(root):
+        current = corpus.load_manifest(root)
+        require(current["revision"] == manifest["revision"], "INPUT_CHANGED", "领取任务期间来源版本改变，请重试。")
+        if selected is not None:
+            atomic_write_json(safe_path(root, f".novel/tasks/{selected['task_id']}.json"), selected)
+        atomic_write_json(safe_path(root, ".novel/reading.json"), session)
+    scope = {"chapter_from": chapter_from, "chapter_to": chapter_to}
+    if selected is not None:
+        return {"state": "pending", "mode": mode, "scope": scope,
+                "task": selected, "previous_error": _failure(root, selected),
+                "next": f"阅读 references/{mode}.md，生成 JSON 后运行 task submit。"}
     state = "needs_review" if manifest.get("needs_review") else ("complete" if scope_tasks else "empty_scope")
-    return {"state": state,
-            "scope": {"chapter_from": chapter_from, "chapter_to": chapter_to}, "status": status(root)}
+    return {"state": state, "mode": mode, "scope": scope, "status": status(root, mode=mode)}
 
 
 def _evidence(root, value, task, required=False):
@@ -157,9 +206,10 @@ def _evidence(root, value, task, required=False):
 
 
 def _normalize_submission(root, body, task):
-    check_keys(body, ("task_id", "input_fingerprint", "overview", "mentions", "claims", "open_questions"), ("model",))
+    check_keys(body, ("task_id", "input_fingerprint", "overview", "mentions", "claims", "open_questions"), ("model", "mode"))
     require(body["input_fingerprint"] == task["input_fingerprint"], "STALE_INPUT", "任务输入指纹不匹配。")
-    overview = bounded_text(body["overview"], "overview", 1200, allow_empty=True)
+    require(body.get("mode", task["mode"]) == task["mode"], "MODE_MISMATCH", "提交模式与已领取任务不一致。")
+    overview = bounded_text(body["overview"], "overview", 1200, allow_empty=task["mode"] == "analyze")
     mentions = []
     for mention in bounded_list(body["mentions"], "mentions", 80):
         check_keys(mention, ("name", "evidence"))
@@ -181,6 +231,7 @@ def _normalize_submission(root, body, task):
                           "evidence": _evidence(root, question.get("evidence", []), task)})
     model = bounded_text(body.get("model", "unknown"), "model", 200)
     return {"format_version": 1, "record_type": "analysis", "record_id": task["task_id"], "task_id": task["task_id"],
+            "mode": task["mode"],
             "workspace_id": task["workspace_id"], "source_revision": task["source_revision"],
             "input_fingerprint": task["input_fingerprint"], "analysis_version": ANALYSIS_VERSION,
             "contract_hash": task["contract_hash"], "submission_hash": digest(body),
@@ -193,7 +244,8 @@ def submit_task(root, body):
     require(isinstance(body, dict) and isinstance(body.get("task_id"), str), "INVALID_INPUT", "缺少 task_id。")
     with writer_lock(root):
         manifest = corpus.load_manifest(root)
-        task = next((item for item in _task_specs(root, manifest) if item["task_id"] == body["task_id"]), None)
+        task = next((item for mode in MODES for item in _task_specs(root, manifest, mode)
+                     if item["task_id"] == body["task_id"]), None)
         require(task is not None, "STALE_TASK", "此任务不属于当前输入；请重新领取任务。")
         try:
             packet = safe_path(root, f".novel/tasks/{task['task_id']}.json")
@@ -222,14 +274,15 @@ def submit_task(root, body):
     return result
 
 
-def current_records(root):
+def current_records(root, mode=None):
     manifest = corpus.load_manifest(root, check_sources=False)
     result = []
-    for task in _task_specs(root, manifest):
-        record = _compatible_record(root, task)
-        if record is not None:
-            result.append(record)
-    return result
+    for selected_mode in MODES if mode is None else (mode,):
+        for task in _task_specs(root, manifest, selected_mode):
+            record = _compatible_record(root, task)
+            if record is not None:
+                result.append(record)
+    return sorted(result, key=lambda record: (record["chapter"]["ordinal"], MODES.index(record.get("mode", "analyze"))))
 
 
 def _item_overlay(changes, record_id, item_id):
@@ -247,13 +300,13 @@ def _item_overlay(changes, record_id, item_id):
             "needs_review": bool(parent.get("needs_review") or child.get("needs_review"))}
 
 
-def search_analysis(root, queries, limit=20, offset=0):
+def search_analysis(root, queries, limit=20, offset=0, mode=None):
     import memory
 
     require(1 <= limit <= 100 and offset >= 0, "INVALID_INPUT", "limit 需为 1–100，offset 不得为负。")
     changes = memory.overlays(root)
     results = []
-    for record in current_records(root):
+    for record in current_records(root, mode=mode):
         items = [{"id": record["record_id"], "kind": "overview", "text": record["overview"], "evidence": []}]
         items += record["claims"]
         items += [{"id": record["record_id"] + ":mention:" + str(number), "kind": "mention",
@@ -266,6 +319,7 @@ def search_analysis(root, queries, limit=20, offset=0):
             if not queries or any(query.casefold() in item["text"].casefold() for query in queries):
                 effect = _item_overlay(changes, record["record_id"], item["id"])
                 results.append({**item, "chapter": record["chapter"], "record_id": record["record_id"],
+                                "mode": record.get("mode", "analyze"),
                                 "source_revision": record["source_revision"], "navigation_only": item["kind"] in ("overview", "open_question"),
                                 "current_status": effect.get("status", "active"), "corrections": effect})
     return {"source_type": "generated_analysis", "matches": results[offset:offset + limit], "total": len(results),
@@ -295,7 +349,8 @@ def rebuild_views(root):
         characters = {}
         for record in records:
             chapter = record["chapter"]
-            lines += [f"## 第 {chapter['ordinal']} 章 {chapter['title']}", "", record["overview"], ""]
+            label = MODE_LABELS[record.get("mode", "analyze")]
+            lines += [f"## 第 {chapter['ordinal']} 章 {chapter['title']} · {label}", "", record["overview"], ""]
             for claim in record["claims"]:
                 effect = _item_overlay(changes, record["record_id"], claim["id"])
                 state = effect.get("status", "active")
@@ -307,7 +362,7 @@ def rebuild_views(root):
                 characters.setdefault(mention["name"], set()).add(chapter["ordinal"])
             for question in record["open_questions"]:
                 state = changes.get(record["record_id"], {}).get("status", "active")
-                questions += [f"## 第 {chapter['ordinal']} 章 · {state}", "", question["text"],
+                questions += [f"## 第 {chapter['ordinal']} 章 · {label} · {state}", "", question["text"],
                               f"来源分析：`{record['record_id']}`", ""]
                 questions += _quote_lines(question["evidence"]) + [""]
         character_lines = ["# 人物称谓导航", "", "同名提及的汇总不证明身份相同；本表不执行别名合并。", ""]
@@ -317,11 +372,17 @@ def rebuild_views(root):
         character_path = safe_path(root, "analysis/views/characters.md")
         question_path = safe_path(root, "analysis/views/questions.md")
         library_path = safe_path(root, "analysis/views/library.md")
-        progress = status(root)
-        library = ["# 小说资料库", "", f"来源版本：`{progress['source_revision']}`", "",
-                   f"分批阅读任务：已接收 {progress['completed']} / {progress['task_count']}；待处理 {progress['pending']}。", "",
-                   "任务覆盖只表示对应产物已接收，不保证抽取了全部事实或伏笔。", "",
-                   "- [章节、事件与判断](chapters.md)", "- [人物称谓出现位置](characters.md)",
+        progress = status(root, mode="analyze")
+        skim_progress = status(root, mode="skim")
+        library = ["# 小说资料库", "", f"来源版本：`{progress['source_revision']}`", ""]
+        for mode, value in (("skim", skim_progress), ("analyze", progress)):
+            library += [f"{MODE_LABELS[mode]}任务：已接收 {value['completed']} / {value['task_count']}；待处理 {value['pending']}。", ""]
+        session = progress["reading_session"]
+        start, end = session.get("chapter_from"), session.get("chapter_to")
+        scope = "全书" if start is None and end is None else f"第 {start or 1} 章至 {end or '末章'}"
+        library += [f"继续阅读：{MODE_LABELS[session['mode']]}，{scope}。", "",
+                   "粗读与精读分别计数；覆盖只表示对应模式的产物已接收，不保证已抽取全部事实或伏笔。", "",
+                   "- [章节、事件与判断（标注阅读模式）](chapters.md)", "- [人物称谓出现位置](characters.md)",
                    "- [疑问与待核查线索](questions.md)", "",
                    "跨章研究与报告在书籍目录 research/，有效纠错与进度通过 notes recall 查询。", ""]
         if progress["needs_review"] or progress["source_changes"]:
@@ -345,6 +406,7 @@ def check_records(root):
             record = load_record(path)
             require(record.get("record_type") == "analysis" and record.get("workspace_id") == manifest["workspace_id"],
                     "CORRUPT_RECORD", "分析记录不属于当前工作区。")
+            require(record.get("mode", "analyze") in MODES, "CORRUPT_RECORD", "分析记录的阅读模式无效。")
             for item in record.get("mentions", []) + record.get("claims", []) + record.get("open_questions", []):
                 evidence = item.get("evidence", [])
                 resolved = corpus.resolve_evidence(root, [{"span_id": e["span_id"], "quote": e["quote"]} for e in evidence],
