@@ -1,0 +1,13 @@
+{
+  "format_version": 1,
+  "title": "渡灯记",
+  "sources": [
+    {"path": "sources/text/01 渡口.txt", "kind": "text", "encoding": "utf-8"},
+    {"path": "sources/text/02 铜铃.txt", "kind": "text", "encoding": "utf-8"},
+    {"path": "sources/text/03 夜问.txt", "kind": "text", "encoding": "utf-8"},
+    {"path": "sources/text/04 旧簿.txt", "kind": "text", "encoding": "utf-8"},
+    {"path": "sources/text/05 姓名.txt", "kind": "text", "encoding": "utf-8"},
+    {"path": "sources/text/06 余灯.txt", "kind": "text", "encoding": "utf-8"},
+    {"path": "sources/supplements/读者评论.md", "kind": "commentary", "encoding": "utf-8"}
+  ]
+}

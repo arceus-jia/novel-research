@@ -1,0 +1,33 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated distribution; rebuild with scripts/package_skill.py
+/dist/
+
+# Local developer notes and agent planning files
+/dev.md
+/task_plan.md
+/findings.md
+/progress.md
+
+# Historical local design drafts
+/docs/novel_research_agent_brief.md
+/docs/v1_implementation_plan.md
+
+# Private book workspaces used during development
+/workspaces/
+.novel/
+
+# Local environment settings; keep example templates shareable
+.env
+.env.*
+!.env.example
+!.env.template
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
