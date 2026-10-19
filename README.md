@@ -2,44 +2,21 @@
 
 novel-research 是面向本地 Agent 的小说阅读与研究技能，适用于 Codex、Claude Code、DeepSeek Harness、OpenCode 和 WorkBuddy 等能够读取文件、执行工具的宿主。
 
-它使用宿主当前配置的模型，将小说正文、补充资料和研究记录组织在独立工作区中，支持原文查证、人物与情节研究、分批粗读与精读，以及跨会话的进度和纠错保存。
+它使用宿主当前配置的模型，帮助你按原文研究人物、剧情和伏笔，分批粗读或精读，并保存研究成果、讨论要点和纠错，供后续会话继续使用。
 
-主要能力：
+首次使用按下面五步操作。已经安装并准备好资料的用户，可以直接查看[开始阅读](#4-接入资料并开始阅读)或[提问与继续研究](#5-提问与继续研究)。
 
-- **按原文研究**：检索原句、阅读上下文，区分叙述事实、人物说法、人物认知与研究推断。
-- **粗读与精读建库**：粗读建立全书概览和定位线索，精读保存详细章节记录、人物称谓和待核查问题，再围绕专题进行跨章复核。
-- **持续积累研究**：保存报告、发现、假设、纠错和阶段进度，供后续会话继续使用。
+## 1. 准备环境
 
-## 快速开始
+需要以下条件：
 
-首次研究一部小说，推荐先用 `init` 接入资料，再用 `analyze` 分批精读建库，随后围绕具体问题开展研究。
-
-需要先快速了解全书时，可使用 `skim` 粗读。`skim <目录>` 与 `analyze <目录>` 均默认处理全书，明确指定章节时才缩小范围。
-
-1. 按[运行要求](#运行要求)与[安装说明](#安装)配置 Python 和技能。
-2. 为小说建立独立的书籍目录，放入正文与参考资料，支持 EPUB、TXT、Markdown 及嵌套子目录，详见[准备资料](#准备资料)。
-3. 在 Agent 对话中先接入资料，再执行粗读或精读命令，将 `./书名` 替换为实际书籍目录：
-
-| 宿主 | 接入资料 | 粗读全书 | 精读全书 |
-| --- | --- | --- | --- |
-| Codex CLI / IDE | `$novel-research init ./书名` | `$novel-research skim ./书名` | `$novel-research analyze ./书名` |
-| Claude Code | `/novel-research init ./书名` | `/novel-research skim ./书名` | `/novel-research analyze ./书名` |
-| OpenCode（支持技能斜杠入口的版本） | `/novel-research init ./书名` | `/novel-research skim ./书名` | `/novel-research analyze ./书名` |
-| 其他兼容宿主 | 使用 novel-research init ./书名 | 使用 novel-research skim ./书名 | 使用 novel-research analyze ./书名 |
-
-`init` 负责识别、转换和登记资料；`skim` 和 `analyze` 使用宿主当前模型逐批阅读，并按不同深度保存结果。已明确阅读命令时直接执行对应任务。长篇可能需要多次会话，可用 `resume` 按保存的阅读模式和章节范围继续。
-
-日常研究直接用自然语言提问，Agent 会按需接入资料、查询资料库并回查原文；也可在完成全书建库前开始研究。更多动作见[可选流程命令](#可选流程命令)。
-
-## 运行要求
-
-- 已配置完成的本地 Agent，具备文件读取、Python 执行和工作区写入权限。
+- 已能正常使用的本地 Agent，能够读取小说文件、执行 Python，并向书籍目录写入研究结果。
 - [Python 3.11 或更高版本](https://www.python.org/downloads/)。
-- 本地 EPUB、TXT 或 Markdown 小说正文；可同时提供访谈、评论、笔记和参考链接。
+- 一部 EPUB、TXT 或 Markdown 格式的小说。
 
-本技能仅依赖 Python 标准库，无需额外 Python 包、数据库服务或模型 API Key。模型的登录、配置和用量由宿主管理。
+本技能仅依赖 Python 标准库，无需安装额外 Python 包、数据库服务或配置额外模型 API Key。模型的登录、配置和用量由宿主管理。
 
-安装 Python 后，可在终端检查版本：
+安装 Python 后，在终端检查版本：
 
 ```sh
 # macOS
@@ -51,148 +28,153 @@ python3 --version
 py -3 --version
 ```
 
-Windows 未提供 `py` 命令时，可使用 `python --version` 检查，或向 Agent 指定已安装解释器的完整路径。安装说明覆盖 macOS 和 Windows；当前已在 macOS 本地验证，Windows 实机兼容性尚待验证。
+Windows 未提供 `py` 命令时，可使用 `python --version` 检查。环境安装或执行遇到问题时，参阅[安装与排障](skills/novel-research/references/setup.md)。
 
-## 安装
+## 2. 安装技能
 
-将仓库中的 [skills/novel-research](skills/novel-research) 完整文件夹复制到宿主的技能目录，保留其中的 `SKILL.md`、`scripts/`、`references/` 和 `assets/`。
+[下载本仓库源码 ZIP](https://github.com/arceus-jia/novel-research/archive/refs/heads/main.zip) 并解压，找到其中的 [skills/novel-research](skills/novel-research) 文件夹。
 
-用户级安装适用于多个项目；项目级安装仅在对应项目范围内使用。
+将整个 `novel-research` 文件夹复制到所用宿主的技能目录，保留 `SKILL.md`、`scripts/`、`references/` 和 `assets/`。表中路径是复制后的最终文件夹，其中直接包含 `SKILL.md`。
+
+用户级安装可用于多个项目；项目级安装随对应项目使用。选择一种安装方式即可：
 
 | 宿主 | 用户级安装位置 | 项目级安装位置 |
 | --- | --- | --- |
 | Codex | `~/.agents/skills/novel-research` | `<项目>/.agents/skills/novel-research` |
 | Claude Code | `~/.claude/skills/novel-research` | `<项目>/.claude/skills/novel-research` |
-| DeepSeek Harness | `~/.agents/skills/novel-research` 或 `~/.dsh/skills/novel-research` | `<项目>/.agents/skills/novel-research` 或 `<项目>/.dsh/skills/novel-research` |
-| OpenCode | `~/.agents/skills/novel-research` 或 `~/.config/opencode/skills/novel-research` | `<项目>/.agents/skills/novel-research` 或 `<项目>/.opencode/skills/novel-research` |
+| DeepSeek Harness | `~/.dsh/skills/novel-research` | `<项目>/.dsh/skills/novel-research` |
+| OpenCode | `~/.config/opencode/skills/novel-research` | `<项目>/.opencode/skills/novel-research` |
 | WorkBuddy（代码开发模式） | `~/.codebuddy/skills/novel-research` | `<项目>/.codebuddy/skills/novel-research` |
 
 `~` 表示用户主目录：macOS 通常为 `/Users/用户名`，Windows 通常为 `C:\Users\用户名`。例如，Windows 的 Codex 用户级安装位置为 `%USERPROFILE%\.agents\skills\novel-research`。
 
-安装后，刷新或新建 Agent 会话，确认技能已被识别。项目级安装应在宿主中打开对应项目。DeepSeek Harness 需要启用技能加载功能；使用自定义技能目录时，按宿主配置安装。
+安装后，刷新或新建 Agent 会话，确认技能已被识别。项目级安装应在宿主中打开对应项目。
 
-WorkBuddy 也支持通过“专家·技能·连接器 → 技能 → 添加技能 → 上传技能”导入完整技能 ZIP。各宿主的加载规则见 [Codex](https://learn.chatgpt.com/docs/customization/overview#skills)、[Claude Code](https://code.claude.com/docs/en/skills)、[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/skill/skill-filesystem/README.md)、[OpenCode](https://docs.opencode.ai/docs/skills/)、[WorkBuddy 技能导入](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Skills-Market) 与 [WorkBuddy 项目配置](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Project)。
+DeepSeek Harness 需要启用技能加载功能；它和 OpenCode 也支持 `.agents/skills` 兼容目录。WorkBuddy 还支持通过技能界面上传完整技能 ZIP。这些安装方式及宿主配置详见[安装与排障](skills/novel-research/references/setup.md)。
 
-## 准备资料
+## 3. 放入小说资料
 
-为每部小说建立独立的书籍目录，放入正文与相关资料。书籍目录应位于技能安装文件夹之外，可以放在项目中，也可以使用其他可访问路径。
+为每部小说建立一个独立的书籍目录，将正文放进去。**只有一份正文文件也可以开始**，访谈、评论和笔记可以以后再补充。
 
-以下为采用 `.agents` 项目级安装时的一种组织方式。书籍名称、资料文件名和子目录均可自行组织：
+书籍目录应位于技能安装文件夹之外。下面以 Codex 项目级安装为例，其他宿主的技能目录按上表替换：
 
 ```text
 研究项目/
 ├── .agents/
 │   └── skills/
-│       └── novel-research/       # 技能安装目录
-└── 书名/                        # 单本书籍工作区
+│       └── novel-research/       # 安装好的技能
+└── 书名/                        # 这部小说的资料与研究结果
     ├── 正文.epub
-    └── 参考资料/
+    └── 参考资料/                # 可选
         ├── 访谈.md
         └── 读者评论.txt
 ```
 
-正文可以是一整本文件，也可以按章节或卷册拆分。访谈、评论和笔记可放在同一层或任意子目录。Agent 会读取必要内容，确认正文顺序和资料性质，并生成、维护 `novel.json` 等工作文件。
+书籍名称、文件名和子目录均可自行组织。正文可以是一整本文件，也可以按卷册或章节拆分；资料可放在任意子目录。Agent 会检查正文顺序和资料性质，接入文件并维护来源配置。
 
-正文用于核对小说事实；作者说明、访谈、读者评论和个人笔记保留各自的来源性质。顺序、版本或身份存在歧义时，Agent 会请求确认。
+普通、未加密的文字 EPUB 会由内置工具自动转换，原包保留。其他格式与提取范围见[资料格式说明](#资料格式说明)。网页参考链接也可在对话中提供，由 Agent 使用宿主已有浏览能力获取和归档。
 
-| 资料形式 | 接入方式 |
-| --- | --- |
-| EPUB | 自动调用内置工具提取文字，保留原包与来源映射。适用于普通、未加密的文字书。 |
-| TXT / Markdown | 按原位置登记和读取，支持多个文件及嵌套目录。 |
-| 网页链接 | 使用宿主已有浏览能力获取内容，保存来源信息后纳入检索。 |
+## 4. 接入资料并开始阅读
 
-EPUB 转换不包含图片 OCR、固定版式恢复或受保护正文的解密；未提取的附属内容会提示核对。引用定位到转换文本及原包内的资源文件，不提供原书排版页码。PDF 等其他格式需先提供可读的 TXT 或 Markdown 版本。
+推荐首次使用先执行 `init` 接入资料，再执行 `analyze` 精读建库。需要先快速了解全书时，第二步使用 `skim` 粗读。
 
-## 使用
+**以下命令发送到 Agent 对话窗口。** 将 `./书名` 替换为实际书籍目录，先发送接入命令，完成后再发送阅读命令：
 
-安装并启用技能后，提供书籍目录和研究问题，直接进行自然语言对话：
+| 宿主 | 第一步：接入资料 | 第二步：精读全书 |
+| --- | --- | --- |
+| Codex CLI / IDE | `$novel-research init ./书名` | `$novel-research analyze ./书名` |
+| Claude Code | `/novel-research init ./书名` | `/novel-research analyze ./书名` |
+| OpenCode（支持技能斜杠入口的版本） | `/novel-research init ./书名` | `/novel-research analyze ./书名` |
+| 其他兼容宿主 | 使用 novel-research init ./书名 | 使用 novel-research analyze ./书名 |
+
+粗读时，将第二条命令中的 `analyze` 换为 `skim`，例如：
+
+```text
+$novel-research skim ./书名
+```
+
+两种阅读方式的区别：
+
+| 动作 | 适合的目标 | 保存的内容 |
+| --- | --- | --- |
+| `skim` | 先了解全书结构，方便定位后续问题 | 简短情节梗概、主要人物、关键事件与待查线索 |
+| `analyze` | 深入研究人物、认知变化、伏笔和叙述方式 | 详细章节记录、具体判断与引文，再围绕专题跨章复核 |
+
+**`skim <目录>` 和 `analyze <目录>` 默认处理全书。** 可在命令后明确限定章节，或描述关注点；关注点本身不缩减阅读范围。例如：
+
+> 使用 novel-research analyze ./书名，只精读第一至二十章，重点记录人物认知变化和伏笔候选。
+
+Agent 会逐批阅读并保存结果。粗读和精读分别记录完成度，可先粗读再精读；精读会参考已有概览，并完成独立的精读任务。两种方式都使用宿主当前模型的用量，长篇可能需要多次会话。
+
+`./书名` 表示当前项目下的书籍目录，也可以使用完整路径。同一会话中目录已经明确时可省略。需要查看帮助时，在宿主的技能入口后使用 `help`，例如 `$novel-research help` 或 `/novel-research help`。
+
+## 5. 提问与继续研究
+
+日常研究直接用自然语言提问，提供书籍目录和问题即可。也可以在全书建库完成前开始讨论，Agent 会按需接入资料、查询已有记录并回查原文。
 
 > 小说资料在「./书名」。请依据前十章，分析主角从怀疑到确认身份的过程，并给出原文出处。
 
-Agent 会按需接入资料、检索原文并开展研究。支持隐式调用的宿主可根据问题自动选用本技能，也可通过宿主技能列表或显式入口选择。Codex 的发现与触发规则见 [官方技能说明](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)。
+> 这条人物动机的解释与前文是否矛盾？请给出相关原句和前后文，并比较其他可能的解释。
 
-### 可选流程命令
+关键判断会回查原文，区分正文叙述、人物说法、人物认知与研究推断。遇到分歧时，可要求对照原文讨论；重要发现、假设和纠错可保存，供以后继续使用。
 
-需要查看帮助、显式接入资料、安排粗读或精读、恢复进度时，可在技能入口后提供动作和参数：
+换会话后，提供同一书籍目录并使用 `resume`，例如在 Codex 中发送：
 
-| 宿主 | 帮助入口 |
+```text
+$novel-research resume ./书名
+```
+
+Claude Code 或支持斜杠入口的 OpenCode 使用 `/novel-research resume ./书名`；其他兼容宿主可发送“使用 novel-research resume ./书名”。Agent 会检查资料变化、读取有效纠错与进度，按保存的阅读模式和章节范围继续。显式使用 `skim` 或 `analyze` 则按新的阅读要求执行。
+
+研究要点和进度保存在书籍工作区；完整聊天不会自动逐句存档。模型的上下文处理和会话持续执行由宿主管理，技能提供可恢复的任务与记录。
+
+## 添加资料与保存成果
+
+| 需要做的事 | 操作方式 |
 | --- | --- |
-| Codex CLI / IDE | `$novel-research help` |
-| Claude Code | `/novel-research help` |
-| OpenCode（支持技能斜杠入口的版本） | `/novel-research help` |
-| 其他兼容宿主 | 加载技能后发送“使用 novel-research help”。 |
+| 新增文件或子目录 | 放入同一书籍目录，然后继续研究，或提出“接入新增资料”。Agent 会递归检查并增量接收，沿用已有记录。 |
+| 更新已有正文 | 正文变更后，要求 Agent 更新资料。工具会准备新来源版本，保留历史引用，并标记受影响的旧分析。 |
+| 添加网页链接 | 发送链接及用途，例如“将这篇访谈作为补充资料保存并注明出处”。无法获取或仅获取部分内容时会说明范围。 |
+| 记住发现或更正 | 直接提出保存要求。Agent 会核对相关原文，区分已查证判断与待核查意见，并保存要点。 |
+| 研究另一部小说 | 为新书建立独立目录，并提供新的路径。 |
 
-本技能已声明 OpenCode 的斜杠入口元数据。各宿主的调用规则见 [Codex](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)、[Claude Code](https://code.claude.com/docs/en/skills#pass-arguments-to-skills) 和 [OpenCode](https://opencode.ai/docs/skills/#write-frontmatter)。
+在开始、恢复研究或收到更新请求时，Agent 才会执行资料检查和接入。
 
-支持以下动作：
-
-| 动作 | 示例参数 | 用途 |
-| --- | --- | --- |
-| `help` | `help` | 查看命令和示例，无需指定书籍目录。 |
-| `init` | `init ./书名` | 显式接入正文和参考资料，生成或维护来源配置。 |
-| `skim` | `skim ./书名` | 默认粗读全书，保存简短梗概、主要人物、关键事件和线索；可限定章节范围。 |
-| `analyze` | `analyze ./书名` | 默认精读全书并建立详细资料库；可限定章节范围或追加关注点。 |
-| `resume` | `resume ./书名` | 读取进度和纠错，按保存的阅读模式与章节范围恢复任务。 |
-
-`./书名` 表示当前项目下的书籍目录，也可使用完整路径。目录在当前会话中已明确时可省略；新会话应提供书籍目录。日常提问和流程命令都会执行必要的资料检查，尚未准备的来源由 Agent 接入。
-
-### 原文查证与专题研究
-
-可直接研究人物动机、认知变化、关系、时间线、伏笔和叙述方式。例如：
-
-> 只依据第一至二十章，梳理主角从怀疑到确认身份的过程，分别列出证据、替代解释和未决问题。
-
-> 对照这篇读者评论与正文，说明哪些判断有原文支持，哪些属于文学解释。
-
-关键判断会回查原文，支持证据与反面证据分别记录。章节导航和旧报告用于定位材料，引用校验用于确认出处；对人物动机或文学意义的判断仍需结合上下文讨论。
-
-### 全书粗读、精读与资料库
-
-`skim` 逐批阅读全书或指定章节，建立情节梗概、主要人物和关键事件导航，便于快速定位后续研究材料。粗读实际覆盖目标范围，主要减少细节抽取与输出；来源转换提示和未覆盖部分会单独说明。
-
-`analyze` 逐批精读正文，保存详细章节记录、人物称谓、认知变化与待核查线索，再按研究目标组织跨章专题。可在请求中明确关注点：
-
-> 使用 novel-research analyze「./书名」，重点记录人物认知变化、事件时间线和伏笔候选；完成分批阅读后做跨章复核，保存原文出处、专题报告与未决问题。
-
-粗读和精读使用宿主当前模型的用量，长篇可能需要多次会话。两种模式分别记录完成度，可先粗读再精读；精读可参考已有概览，并继续完成独立的精读任务。同一模式下已接收的兼容任务可复用。资料库入口展示两种进度，章节记录标注阅读模式。完成阅读任务表示相应输入已处理，后续研究仍可补充遗漏或修正解释。
-
-## 更新资料与持续研究
-
-**新增文件与子目录**：将资料放入同一书籍工作区。Agent 会在开始、恢复研究或收到更新资料请求时，递归检查并接入新增内容；子目录中的资料也在检查范围内。可直接提出“接入新增资料并继续研究”。已有正文变更后，会更新来源版本，保留历史引用。增量接收沿用现有配置与记录，由研究任务触发执行。
-
-**新增书籍工作区**：每部小说使用独立目录。研究另一部小说时提供新的目录路径，由 Agent 接入对应资料。
-
-**新增链接**：提供链接及用途，例如“将这篇访谈作为补充资料保存并注明出处”。Agent 归档实际取得的内容；无法读取或仅取得部分内容时，会说明处理范围。
-
-**保存与纠错**：研究过程中可要求保存发现、假设、偏好或更正。Agent 会核对相关原文，区分已查证判断与待核查意见，并记录有效的阶段进度。持久化内容是研究要点，完整聊天不会自动逐句存档。
-
-**跨会话继续**：向新会话提供同一书籍目录，使用 `resume` 并补充当前目标。工具保留上次阅读模式和章节范围；显式使用 `skim` 或 `analyze` 可开展新的全书阅读，或附带新的章节范围。进度和研究记录保存在工作区中，可供兼容宿主继续使用。
-
-## 结果与备份
-
-下列路径均相对于书籍工作区：
+结果路径均相对于书籍目录：
 
 | 内容 | 位置 |
 | --- | --- |
-| 来源配置，由 Agent 维护 | `novel.json` |
-| 资料库入口 | `analysis/views/library.md` |
+| 资料库入口与粗读、精读进度 | `analysis/views/library.md` |
 | 章节、人物称谓和疑问导航 | `analysis/views/` |
+| 每批阅读的详细记录 | `analysis/records/` |
 | 专题研究报告 | `research/<主题>/report.md` |
-| 讨论要点、纠错与进度记录 | `notes/` |
+| 讨论要点、纠错与阶段进度 | `notes/` |
+| 由 Agent 维护的来源配置 | `novel.json` |
 
-资料库与导航在完成相应分析后生成。需要报告时，可在研究请求中指定输出目标。
+导航和报告在完成相应分析或研究后生成。需要报告时，可在请求中说明输出目标。
 
-备份或迁移时复制整个书籍工作区，包括原始资料、配置、研究记录和隐藏目录 `.novel/`。升级技能时替换技能安装文件夹，保留书籍工作区；升级后可要求 Agent 进行环境与资料检查。
+备份或迁移时，复制整个书籍目录，包括原始资料、研究记录和隐藏目录 `.novel/`。升级技能时替换技能安装文件夹，保留书籍目录；升级后可要求 Agent 检查环境与资料。
 
-## 示例与参考文档
+## 资料格式说明
+
+| 资料形式 | 处理方式与范围 |
+| --- | --- |
+| EPUB | 提取普通、未加密文字书的正文，保留原包与来源映射。图片、固定版式和受保护正文不在自动转换范围内；遗漏内容会提示核对。引用定位到转换文本和包内资源文件，不提供排版页码。 |
+| TXT / Markdown | 按原位置登记和读取，支持整本、多文件和嵌套目录。 |
+| 网页链接 | 使用宿主已有浏览能力获取实际内容，保存来源信息；未取得的内容保留待获取状态。 |
+| PDF 等其他格式 | 先提供可读的 TXT 或 Markdown 版本，再接入研究。 |
+
+正文用于核对小说事实；作者说明、访谈、读者评论和个人笔记保留各自的来源性质。正文顺序、资料版本或身份存在影响研究的歧义时，Agent 会请求确认。
+
+## 示例与进阶参考
 
 | 资源 | 用途 |
 | --- | --- |
-| [示例书籍《渡灯记》](skills/novel-research/assets/example) | 六章原创正文与一份读者评论，可复制到独立工作区，体验资料接入、查证与建库流程。 |
-| [安装与排障](skills/novel-research/references/setup.md) | 环境检查、安装步骤、编码及常见执行问题。 |
-| [资料接收与更新](skills/novel-research/references/intake.md) | 本地文件、EPUB 和参考链接的接入规则。 |
-| [分批粗读](skills/novel-research/references/skim.md) | 全书概览、简洁线索记录和粗读恢复流程。 |
-| [全书精读与资料库](skills/novel-research/references/library.md) | 分批精读、跨章复核和任务恢复流程。 |
-| [研究与讨论记录](skills/novel-research/references/research.md) | 专题报告、研究记忆和纠错的保存方式。 |
+| [示例书籍《渡灯记》](skills/novel-research/assets/example) | 六章原创正文与一份读者评论，可复制到独立书籍目录，体验资料接入、查证与建库。 |
+| [安装与排障](skills/novel-research/references/setup.md) | 环境检查、宿主安装方式、编码与执行问题。 |
+| [资料接收与更新](skills/novel-research/references/intake.md) | 文件、EPUB 和网页资料的接入细节。 |
+| [分批粗读](skills/novel-research/references/skim.md) | 简洁线索记录、粗读进度和恢复流程。 |
+| [全书精读与资料库](skills/novel-research/references/library.md) | 详细建库、跨章复核和精读恢复流程。 |
+| [研究与讨论记录](skills/novel-research/references/research.md) | 专题报告、讨论记忆和纠错的保存方式。 |
 
-示例资料用于体验工作流，参考文档提供进阶操作与流程细节。日常使用以书籍目录和研究目标作为输入，由 Agent 执行相应工具。
+宿主官方说明：[Codex](https://learn.chatgpt.com/docs/build-skills)、[Claude Code](https://code.claude.com/docs/en/skills)、[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/skill/skill-filesystem/README.md)、[OpenCode](https://opencode.ai/docs/skills/)、[WorkBuddy 技能导入](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Skills-Market) 与[项目配置](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Project)。
