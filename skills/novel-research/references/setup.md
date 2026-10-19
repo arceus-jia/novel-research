@@ -2,9 +2,11 @@
 
 ## 普通使用：给 Agent 一个目录
 
-安装并启用技能后，提供书籍目录，以自然语言提出研究问题。Agent 会执行必要的资料接入、检索和查证。可选流程入口为：`help` 展示帮助；`init <目录>` 显式接入资料；`skim [目录]` 粗读全书；`analyze [目录]` 精读全书；`resume [目录]` 按保存的模式和范围恢复。
+安装并启用技能后，提供书籍目录，以自然语言提出研究问题。Agent 会执行必要的资料接入、检索和查证。可选流程入口为：`help` 展示帮助；`init <目录>` 显式接入资料；`skim [目录]` 粗读全书；`analyze [目录]` 精读全书；`compare <专题目录> <书籍目录1> <书籍目录2> [问题]` 开展跨书比较；`resume [目录]` 恢复书籍阅读或专题讨论。
 
 项目级安装后，在宿主中打开对应项目，为每本书建立独立资料目录。原文件可放在该目录任意层级，由 Agent 接收并建立来源配置。
+
+跨书专题放在各书工作区之外，由 Agent 登记书籍位置、复用现有分析并按需回查原文。各书分别接入资料，专题不运行合并的逐章任务；具体查询、保存和恢复见 [跨书专题](compare.md)。迁移需保留专题及参与书籍，含隐藏 `.novel/`，建议保持相对目录关系。
 
 Codex CLI/IDE 的示例为 `$novel-research init ./书名`，Claude Code 为 `/novel-research init ./书名`。本技能声明 `metadata.opencode/slash: "true"`，支持该字段的 OpenCode 版本也可使用 `/novel-research init ./书名`。其他宿主可加载技能后发送“使用 novel-research init ./书名”。依据 [Codex 技能说明](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)、[Claude Code 参数说明](https://code.claude.com/docs/en/skills#pass-arguments-to-skills) 和 [OpenCode 元数据说明](https://opencode.ai/docs/skills/#write-frontmatter)。
 

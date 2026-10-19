@@ -2,7 +2,7 @@
 
 novel-research 是面向本地 Agent 的小说阅读与研究技能，适用于 Codex、Claude Code、DeepSeek Harness、OpenCode 和 WorkBuddy 等能够读取文件、执行工具的宿主。
 
-它使用宿主当前配置的模型，帮助你按原文研究人物、剧情和伏笔，分批粗读或精读，并保存研究成果、讨论要点和纠错，供后续会话继续使用。
+它使用宿主当前配置的模型，帮助你按原文研究人物、剧情和伏笔，分批粗读或精读，开展跨书比较，并保存研究成果、讨论要点和纠错，供后续会话继续使用。
 
 首次使用按下面五步操作。已经安装并准备好资料的用户，可以直接查看[开始阅读](#4-接入资料并开始阅读)或[提问与继续研究](#5-提问与继续研究)。
 
@@ -128,6 +128,31 @@ Claude Code 或支持斜杠入口的 OpenCode 使用 `/novel-research resume ./�
 
 研究要点和进度保存在书籍工作区；完整聊天不会自动逐句存档。模型的上下文处理和会话持续执行由宿主管理，技能提供可恢复的任务与记录。
 
+## 跨书专题
+
+需要对照本篇、外传、增补篇或不同版本时，保留各书的独立目录，再建立一个专题目录。各书已有的粗读、精读和研究结果可以继续使用，无需复制正文或重新全书分析。
+
+```text
+研究项目/
+├── 刀剑神域/                   # 独立书籍工作区
+├── 刀剑神域进击篇/             # 独立书籍工作区
+└── 人物认知对照/               # 跨书专题，由 Agent 建立
+```
+
+首次使用可先分别 `init` 两本书，也可以直接让 Agent 接入。向对话窗口发送：
+
+```text
+$novel-research compare ./人物认知对照 ./刀剑神域 ./刀剑神域进击篇 对照人物认知的描写，给出两部作品的原文依据。
+```
+
+Claude Code 或支持技能斜杠入口的 OpenCode 将 `$novel-research` 换为 `/novel-research`；其他兼容宿主可使用“使用 novel-research”前缀。也可以直接用自然语言提供两个目录和比较问题，由 Agent 管理专题与书籍登记。
+
+Agent 会分别查询各书资料与纠错，回查相关原文。报告中的引文标注所属书籍、来源版本和位置；对有出入的描述保留区别，不仅凭同名人物合并设定。比较结论、讨论和进度保存在专题中，换会话后可直接提问，或使用 `resume ./人物认知对照` 继续。
+
+专题入口是 `library.md`，报告位于 `research/<主题>/report.md`，讨论与纠错位于 `notes/`。参与书籍的来源更新或新增纠错、撤回后，旧报告会提示复核；复核后可保存同一主题的新结果，历史引文保留。目前按参与书籍提示复核，可能包含与当前问题无关的变动；检查在 Agent 执行时发生。
+
+备份或迁移时，保留专题目录和所有参与书籍的完整工作区，并尽量保持相对目录关系。专题登记在 `topic.json`，由 Agent 维护，用户无需编辑；它引用各书工作区，不能代替各书的备份。详细流程见 [跨书专题说明](skills/novel-research/references/compare.md)。
+
 ## 添加资料与保存成果
 
 | 需要做的事 | 操作方式 |
@@ -176,5 +201,6 @@ Claude Code 或支持斜杠入口的 OpenCode 使用 `/novel-research resume ./�
 | [分批粗读](skills/novel-research/references/skim.md) | 简洁线索记录、粗读进度和恢复流程。 |
 | [全书精读与资料库](skills/novel-research/references/library.md) | 详细建库、跨章复核和精读恢复流程。 |
 | [研究与讨论记录](skills/novel-research/references/research.md) | 专题报告、讨论记忆和纠错的保存方式。 |
+| [跨书专题](skills/novel-research/references/compare.md) | 多部作品或版本的对照、带书籍标识的引用与持续讨论。 |
 
 宿主官方说明：[Codex](https://learn.chatgpt.com/docs/build-skills)、[Claude Code](https://code.claude.com/docs/en/skills)、[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/skill/skill-filesystem/README.md)、[OpenCode](https://opencode.ai/docs/skills/)、[WorkBuddy 技能导入](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Skills-Market) 与[项目配置](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Project)。

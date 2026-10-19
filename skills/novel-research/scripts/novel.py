@@ -31,7 +31,7 @@ def _chapters(parser):
 def parser():
     result = Parser(description="小说研究工具；模型分析由当前宿主 Agent 执行。")
     result.add_argument("--version", action="version", version=VERSION)
-    result.add_argument("--workspace", help="小说工作区；请放在子命令之前。")
+    result.add_argument("--workspace", help="书籍或跨书专题工作区；请放在子命令之前。")
     commands = result.add_subparsers(dest="command", required=True, parser_class=Parser)
     commands.add_parser("doctor", help="检查 Python、skill 资源和工作区写入能力。")
     epub_parser = commands.add_parser("epub", help="保留原包，将文字 EPUB 转成可登记的 UTF-8 正文。")
@@ -54,6 +54,11 @@ def parser():
     prepare.add_argument("--source", action="append", help="首次创建配置时显式指定的有序相对路径，可重复。")
     prepare.add_argument("--title")
     prepare.add_argument("--encoding", default="utf-8")
+    topic = commands.add_parser("topic", help="建立引用多个书籍工作区的独立专题。")
+    topic_commands = topic.add_subparsers(dest="action", required=True, parser_class=Parser)
+    topic_init = topic_commands.add_parser("init", help="登记至少两本已准备的书；重复调用可追加书籍或更新失效路径。")
+    topic_init.add_argument("books", nargs="*", help="书籍路径；相对路径按专题目录解析，推荐使用绝对路径。")
+    topic_init.add_argument("--title")
     status = commands.add_parser("status", help="查看来源变更、分析覆盖与章节目录。")
     status.add_argument("--mode", choices=("skim", "analyze"), help="查看指定阅读模式；省略时查看最近阅读模式。")
     status.add_argument("--chapters", action="store_true")
@@ -64,6 +69,7 @@ def parser():
     search.add_argument("--kind", action="append")
     search.add_argument("--revision")
     search.add_argument("--mode", choices=("skim", "analyze"), help="仅用于 --in analysis；默认查询两种模式。")
+    search.add_argument("--book", action="append", help="跨书专题中的书籍 ID，可重复；省略时搜索全部参与书籍。")
     _chapters(search)
     _pagination(search)
     read = commands.add_parser("read", help="读取指定片段或章节的有界上下文。")
@@ -71,6 +77,7 @@ def parser():
     selector.add_argument("--span")
     selector.add_argument("--chapter")
     read.add_argument("--revision")
+    read.add_argument("--book", help="跨书专题中原文所属的书籍 ID。")
     _pagination(read, 6000)
     task = commands.add_parser("task", help="领取或提交逐章分析任务。")
     task_commands = task.add_subparsers(dest="action", required=True, parser_class=Parser)
@@ -97,8 +104,8 @@ def parser():
 def doctor(root=None):
     check_python()
     skill = Path(__file__).resolve().parent.parent
-    resources = ["SKILL.md", "scripts/common.py", "scripts/corpus.py", "scripts/analysis.py", "scripts/memory.py", "scripts/epub.py",
-                 "references/setup.md", "references/intake.md", "references/analyze.md", "references/skim.md", "references/research.md", "references/library.md"]
+    resources = ["SKILL.md", "scripts/common.py", "scripts/corpus.py", "scripts/analysis.py", "scripts/memory.py", "scripts/epub.py", "scripts/topics.py",
+                 "references/setup.md", "references/intake.md", "references/analyze.md", "references/skim.md", "references/research.md", "references/library.md", "references/compare.md"]
     missing = [name for name in resources if not (skill / name).is_file()]
     modules = {name: importlib.util.find_spec(name) is not None
                for name in ("argparse", "hashlib", "json", "pathlib", "tempfile", "unittest", "zipfile", "html.parser", "xml.etree.ElementTree")}
@@ -145,12 +152,20 @@ def dispatch(args):
     root = Path(args.workspace).expanduser().resolve() if args.workspace else None
     if args.command == "doctor":
         return doctor(root)
-    require(root is not None, "USAGE", "请在子命令之前提供 --workspace 小说目录。")
-    require(root.is_dir(), "WORKSPACE_NOT_FOUND", "小说工作区目录不存在。", str(root))
+    require(root is not None, "USAGE", "请在子命令之前提供 --workspace 工作区目录。")
     _validate_ranges(args)
     import analysis
     import corpus
     import memory
+    import topics
+
+    if args.command == "topic":
+        return topics.init_topic(root, args.books, title=args.title)
+    require(root.is_dir(), "WORKSPACE_NOT_FOUND", "工作区目录不存在。", str(root))
+    cross_book = topics.is_topic(root)
+    require(not cross_book or args.command in {"status", "search", "read", "notes", "research", "check"},
+            "TOPIC_WORKSPACE", "请在各书工作区分别接入资料、粗读或精读；专题目录用于跨书查询与讨论。")
+    require(cross_book or not getattr(args, "book", None), "USAGE", "--book仅用于跨书专题。")
 
     if args.command == "epub":
         import epub
@@ -172,6 +187,9 @@ def dispatch(args):
                 "preview_truncated": len(manifest["chapters"]) > 20,
                 "next": "status --chapters 可查看目录；task next 可开始分析；search 可直接检索原文。"}
     if args.command == "status":
+        if cross_book:
+            require(args.mode is None and not args.chapters, "USAGE", "专题不合并各书章节；请在各书工作区查看阅读覆盖。")
+            return topics.status(root)
         result = analysis.status(root, mode=args.mode)
         result["sources"] = corpus.scan_sources(root, limit=20)
         if args.chapters:
@@ -188,13 +206,24 @@ def dispatch(args):
             require(not args.kind and not args.revision and args.chapter_from is None and args.chapter_to is None,
                     "USAGE", "分析/记忆检索不接受原文版本或章节过滤；请检查返回记录的范围和状态。")
             if args.collection == "analysis":
+                if cross_book:
+                    return topics.search(root, args.queries, collection="analysis", book_ids=args.book,
+                                         limit=args.limit, offset=args.offset, mode=args.mode)
                 return analysis.search_analysis(root, args.queries, limit=args.limit, offset=args.offset, mode=args.mode)
+            require(not args.book, "USAGE", "专题记忆保存在专题内；各书记忆请在对应书籍工作区读取。")
             require(len(args.queries) == 1 and args.offset == 0, "USAGE", "记忆检索一次接受一个查询，请使用 notes recall。")
             return memory.recall_notes(root, query=args.queries[0], limit=args.limit)
+        if cross_book:
+            return topics.search(root, args.queries, collection=args.collection, book_ids=args.book,
+                                 kinds=args.kind, chapter_from=args.chapter_from, chapter_to=args.chapter_to,
+                                 limit=args.limit, offset=args.offset, revision=args.revision)
         kinds = args.kind or (["text"] if args.collection == "text" else [kind for kind in SOURCE_KINDS if kind != "text"])
         return corpus.search(root, args.queries, kinds=kinds, chapter_from=args.chapter_from,
                              chapter_to=args.chapter_to, limit=args.limit, offset=args.offset, revision=args.revision)
     if args.command == "read":
+        if cross_book:
+            return topics.read(root, args.book, span_id=args.span, chapter_id=args.chapter,
+                               limit=args.limit, offset=args.offset, revision=args.revision)
         return corpus.read(root, span_id=args.span, chapter_id=args.chapter,
                            limit=args.limit, offset=args.offset, revision=args.revision)
     if args.command == "task":
@@ -206,13 +235,25 @@ def dispatch(args):
             return memory.recall_notes(root, query=args.query, limit=args.limit, include_history=args.history)
         result = memory.save_note(root, _input(root, args.file))
         try:
-            analysis.rebuild_views(root)
+            topics.rebuild_view(root) if cross_book else analysis.rebuild_views(root)
         except (NovelError, OSError) as error:
             result = {**result, "view_warning": "记忆已保存，视图待重建：" + str(error)}
         return result
     if args.command == "research":
-        return memory.save_research(root, _input(root, args.file)) if args.action == "save" else memory.render_research(root, args.case_id)
+        result = memory.save_research(root, _input(root, args.file)) if args.action == "save" else memory.render_research(root, args.case_id)
+        if cross_book:
+            try:
+                topics.rebuild_view(root)
+            except (NovelError, OSError) as error:
+                result = {**result, "view_warning": "专题记录已保存，入口待重建：" + str(error)}
+        return result
     if args.command == "check":
+        if cross_book:
+            result = {"memory": memory.check_records(root), "status": topics.status(root)}
+            require(result["memory"]["valid"], "CHECK_FAILED", "部分跨书记录或引用校验失败。", result)
+            if args.rebuild:
+                result["views"] = {"library": topics.rebuild_view(root)}
+            return result
         import epub
         result = {"analysis": analysis.check_records(root), "memory": memory.check_records(root),
                   "epub": epub.check_conversions(root), "status": analysis.status(root)}

@@ -10,7 +10,8 @@ from common import (
     NovelError, SOURCE_KINDS, atomic_write_json, atomic_write_text, digest,
     load_record, require, safe_path, save_record, utc_now, writer_lock,
 )
-from corpus import load_manifest, resolve_evidence
+import corpus
+import topics
 
 
 NOTE_TYPES = {"correction", "hypothesis", "finding", "preference", "checkpoint", "withdrawal"}
@@ -38,12 +39,32 @@ def _strings(value, name, maximum=100):
     return [_text(item, name, 4000) for item in value]
 
 
-def _evidence_input(value):
+def load_manifest(root, revision=None, check_sources=True):
+    module = topics if topics.is_topic(root) else corpus
+    return module.load_manifest(root, revision=revision, check_sources=check_sources)
+
+
+def resolve_evidence(root, evidence, revision=None):
+    module = topics if topics.is_topic(root) else corpus
+    return module.resolve_evidence(root, evidence, revision=revision)
+
+
+def _pin_manifest(root, revision):
+    manifest = load_manifest(root, revision=revision, check_sources=False)
+    if topics.is_topic(root):
+        topics.save_snapshot(root, manifest)
+    return manifest
+
+
+def _evidence_input(value, cross_book=False):
     require(isinstance(value, list) and len(value) <= 32,
             "invalid_input", "evidence must be a list of at most 32 quotations")
     for item in value:
-        require(isinstance(item, dict) and set(item) == {"span_id", "quote"},
-                "invalid_input", "evidence entries must contain only span_id and quote")
+        fields = {"book_id", "span_id", "quote"} if cross_book else {"span_id", "quote"}
+        require(isinstance(item, dict) and set(item) == fields,
+                "invalid_input", "evidence entries must contain only " + ", ".join(sorted(fields)))
+        if cross_book:
+            _identifier(item["book_id"], "book_id")
         _text(item["span_id"], "span_id", 500)
         _text(item["quote"], "quote", 12000)
     return value
@@ -183,7 +204,7 @@ def save_note(root, body):
     content = _text(body.get("content"), "content")
     require(isinstance(body.get("status", "pending"), str) and body.get("status", "pending") in {"pending", "applied"},
             "invalid_input", "Invalid correction status")
-    evidence_input = _evidence_input(body.get("evidence", []))
+    evidence_input = _evidence_input(body.get("evidence", []), cross_book=topics.is_topic(root))
     for field in ("reason", "semantic_decision"):
         if field in body:
             _text(body[field], field, 4000)
@@ -207,7 +228,7 @@ def save_note(root, body):
             require(existing.get("workspace_id") == workspace_id, "workspace_mismatch", "Note belongs to another book")
         revision = body.get("source_revision", existing["source_revision"] if existing else manifest["revision"])
         _text(revision, "source_revision", 200)
-        load_manifest(root, revision=revision, check_sources=False)
+        _pin_manifest(root, revision)
         resolved = resolve_evidence(root, evidence_input, revision=revision) if evidence_input else []
         require(all(item["source_kind"] == "text" for item in resolved), "invalid_source_kind",
                 "Discussion evidence must come from the novel text")
@@ -259,10 +280,11 @@ def recall_notes(root, query="", limit=20, include_history=False):
             "include_history": include_history}
 
 
-def _scope(value):
-    require(isinstance(value, dict) and not set(value) - {"chapter_from", "chapter_to", "source_kinds"},
+def _scope(value, book_ids=None):
+    fields = {"chapter_from", "chapter_to", "source_kinds"}
+    require(isinstance(value, dict) and not set(value) - (fields | ({"books"} if book_ids is not None else set())),
             "invalid_input", "Invalid research scope")
-    scope = dict(value)
+    scope = {key: item for key, item in value.items() if key != "books"}
     for field in ("chapter_from", "chapter_to"):
         if field in scope:
             require(type(scope[field]) is int and scope[field] >= 1, "invalid_input", f"{field} must be positive")
@@ -271,16 +293,30 @@ def _scope(value):
     require(isinstance(kinds, list) and 1 <= len(kinds) <= len(SOURCE_KINDS)
             and all(isinstance(kind, str) and kind in SOURCE_KINDS for kind in kinds)
             and len(set(kinds)) == len(kinds), "invalid_input", "Invalid source_kinds")
+    if "books" in value:
+        books = value["books"]
+        require(isinstance(books, dict) and bool(books) and set(books) <= set(book_ids),
+                "invalid_scope", "Scope must name registered book IDs")
+        scope["books"] = {}
+        inherited = {key: item for key, item in scope.items() if key != "books"}
+        for book_id, book_scope in books.items():
+            require(isinstance(book_scope, dict) and not set(book_scope) - fields,
+                    "invalid_scope", "Invalid per-book research scope")
+            scope["books"][book_id] = _scope({**inherited, **book_scope})
     return scope
 
 
 def _resolve_scoped(root, evidence, revision, scope):
-    resolved = resolve_evidence(root, _evidence_input(evidence), revision=revision) if evidence else []
+    resolved = resolve_evidence(root, _evidence_input(evidence, cross_book=topics.is_topic(root)), revision=revision) if evidence else []
     for item in resolved:
-        require(item["source_kind"] in scope["source_kinds"], "out_of_scope", "Evidence source kind is outside research scope")
-        if item["source_kind"] == "text" and ("chapter_from" in scope or "chapter_to" in scope):
+        local_scope = scope
+        if "books" in scope:
+            require(item["book_id"] in scope["books"], "out_of_scope", "Evidence book is outside research scope")
+            local_scope = scope["books"][item["book_id"]]
+        require(item["source_kind"] in local_scope["source_kinds"], "out_of_scope", "Evidence source kind is outside research scope")
+        if item["source_kind"] == "text" and ("chapter_from" in local_scope or "chapter_to" in local_scope):
             ordinal = item.get("chapter_ordinal")
-            require(type(ordinal) is int and scope.get("chapter_from", 1) <= ordinal <= scope.get("chapter_to", 10**12),
+            require(type(ordinal) is int and local_scope.get("chapter_from", 1) <= ordinal <= local_scope.get("chapter_to", 10**12),
                     "out_of_scope", "Evidence chapter is outside research scope")
     return resolved
 
@@ -312,12 +348,14 @@ def save_research(root, body):
         previous = _case_records(root, case_id, workspace_id)
         prior_id = next((item for item in previous if item["record_id"] == record_id), None)
         base = prior_id or (previous[-1] if previous else None)
-        revision = body.get("source_revision", base["source_revision"] if base else manifest["revision"])
+        cross_book = topics.is_topic(root)
+        revision = body.get("source_revision", base["source_revision"] if base and (prior_id or not cross_book) else manifest["revision"])
         _text(revision, "source_revision", 200)
-        load_manifest(root, revision=revision, check_sources=False)
-        require(not previous or previous[0]["source_revision"] == revision, "revision_mismatch",
+        pinned = _pin_manifest(root, revision)
+        require(cross_book or not previous or previous[0]["source_revision"] == revision, "revision_mismatch",
                 "A research case uses one fixed source revision; create a new case for a new revision")
-        scope = _scope(body.get("scope", base["scope"] if base else {}))
+        scope = _scope(body.get("scope", base["scope"] if base else {}),
+                       book_ids=[book["id"] for book in pinned["books"]] if cross_book else None)
         accepted = []
         normalized = []
         for index, finding in enumerate(findings):
@@ -326,8 +364,8 @@ def save_research(root, body):
             require(isinstance(finding.get("kind"), str) and finding["kind"] in FINDING_KINDS,
                     "invalid_input", "Invalid finding kind")
             text = _text(finding.get("text"), "finding text", 8000)
-            evidence_input = _evidence_input(finding.get("evidence", []))
-            counter_input = _evidence_input(finding.get("counter_evidence", []))
+            evidence_input = _evidence_input(finding.get("evidence", []), cross_book=cross_book)
+            counter_input = _evidence_input(finding.get("counter_evidence", []), cross_book=cross_book)
             require(finding["kind"] not in {"narration", "speech", "belief"} or bool(evidence_input),
                     "missing_evidence", "Narration, speech and belief findings need supporting evidence")
             evidence = _resolve_scoped(root, evidence_input, revision, scope)
@@ -366,6 +404,9 @@ def _quote_lines(evidence):
     lines = []
     for item in evidence:
         label = f"{item['source_kind']} / {item['source_id']} / {item.get('chapter_id') or 'source'}"
+        if "book_id" in item:
+            chapter = f"第 {item['chapter_ordinal']} 章 / " if item["chapter_ordinal"] is not None else ""
+            label = f"{item['book_title']} ({item['book_id']}) / " + chapter + label
         lines.append(f"- [{label}; {item['source_revision']}; {item['span_id']}; {item['start']}:{item['end']}]")
         if "epub_origin" in item:
             resources = ", ".join(location["resource"] for location in item["epub_locations"])
@@ -376,7 +417,10 @@ def _quote_lines(evidence):
 
 def _verify_evidence(root, group, revision):
     require(isinstance(group, list), "invalid_record", "Stored evidence must be a list")
-    references = [{"span_id": item["span_id"], "quote": item["quote"]} for item in group]
+    fields = ("book_id", "span_id", "quote") if topics.is_topic(root) else ("span_id", "quote")
+    require(all(isinstance(item, dict) and all(field in item for field in fields) for item in group),
+            "invalid_evidence", "Stored evidence is missing its source identity")
+    references = [{field: item[field] for field in fields} for item in group]
     resolved = resolve_evidence(root, references, revision=revision) if references else []
     require(group == resolved, "invalid_evidence", "Stored quotation metadata does not match snapshot")
     return resolved
@@ -395,7 +439,8 @@ def render_research(root, case_id):
     stale = record["source_revision"] != manifest["revision"]
     review_ids = [record_id for record_id in [record["record_id"], *(item["id"] for item in record["findings"])]
                   if view.get(record_id, {}).get("needs_review")]
-    needs_review = stale or bool(review_ids)
+    pending_sources = bool(manifest.get("source_changes"))
+    needs_review = stale or bool(review_ids) or pending_sources
     lines = [f"# {record['question']}", "", f"Case: {case_id}", f"Record: {record['record_id']}",
              f"Source revision: {record['source_revision']}",
              "Scope: " + str(record["scope"]), "",
@@ -404,7 +449,11 @@ def render_research(root, case_id):
             kind != "text" for kind in record["scope"]["source_kinds"]):
         lines.extend(["章节上下限仅用于正文；补充资料不按章号过滤，且仍受 source_kinds 限制。", ""])
     if stale:
-        lines.extend(["**STALE: this report uses a previous source revision.**", ""])
+        message = ("**STALE / 需复核：参与书籍、来源版本或原书纠错已变化，以下保留旧记录及历史引文。**"
+                   if topics.is_topic(root) else "**STALE: this report uses a previous source revision.**")
+        lines.extend([message, ""])
+    if pending_sources:
+        lines.extend(["**需复核：参与书籍有尚未准备的来源变化，报告引用仍来自已保存快照。**", ""])
     if review_ids:
         lines.extend(["**NEEDS REVIEW: saved claims have discussion corrections or withdrawals.**", ""])
     labels = {"narration": "Narration", "speech": "Character speech", "belief": "Character belief",
