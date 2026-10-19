@@ -320,7 +320,7 @@ class AnalysisTests(unittest.TestCase):
         self.error("INVALID_READING_STATE", lambda: analysis.next_task(self.root))
 
     def test_skim_long_chapter_reads_every_span_once(self):
-        self.source.write_text("第一章 长夜\n" + "青客仍在等待。" * 2500, encoding="utf-8")
+        self.source.write_bytes(("第一章 长夜\r\n" + "青客仍在等待。" * 2500).encode("utf-8"))
         corpus.prepare(self.root)
         seen = []
         text = []
@@ -335,7 +335,7 @@ class AnalysisTests(unittest.TestCase):
             result = analysis.next_task(self.root)
         self.assertEqual(result["state"], "complete")
         self.assertEqual(len(seen), len(set(seen)))
-        self.assertEqual("".join(text), self.source.read_text(encoding="utf-8"))
+        self.assertEqual("".join(text), self.source.read_bytes().decode("utf-8"))
         self.assertTrue(analysis.status(self.root, mode="skim")["coverage_complete"])
         self.assertEqual(analysis.status(self.root, mode="analyze")["completed"], 0)
 
